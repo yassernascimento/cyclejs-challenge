@@ -43,23 +43,40 @@ type SimplifiedState = Partial<{
 type WikipediaAPIResponse = [string, string[], string[], string[]]
 
 const containerStyle = {
+  fontFamily: 'helvetica, arial, sans-serif',
   background: '#EFEFEF',
-  padding: '5px',
+  padding: '50px 150px',
+  height: '100vh',
 }
 
+const ulContainerStyle = {
+  width: '300px',
+}
+
+const liContainerStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  marginTop: '4px',
+}
+
+const selectedItemTextStyle = {}
+
 const sectionStyle = {
-  marginBottom: '10px',
+  marginTop: '20px',
+}
+
+const deleteButtonStyle = {
+  cursor: 'pointer',
 }
 
 const searchLabelStyle = {
-  display: 'inline-block',
+  display: 'block',
   width: '100px',
-  textAlign: 'right',
 }
 
 const comboBoxStyle = {
   position: 'relative',
-  display: 'inline-block',
+  display: 'block',
   width: '300px',
 }
 
@@ -327,10 +344,15 @@ function renderComboBox({suggestions, highlighted, selected}: SimplifiedState) {
 
 function renderSelectedList({selectedList}: SimplifiedState) {
   return ul(
+    {style: ulContainerStyle},
     selectedList.map((selectedEl, index) =>
-      div([
-        li({style: {}}, selectedEl),
-        button('.delete-btn', {attrs: {'data-index': index}}, 'x'),
+      li({style: liContainerStyle}, [
+        span({style: selectedItemTextStyle}, selectedEl),
+        button(
+          '.delete-btn',
+          {style: deleteButtonStyle, attrs: {'data-index': index}},
+          'x'
+        ),
       ])
     )
   )
