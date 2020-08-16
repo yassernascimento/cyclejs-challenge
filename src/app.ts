@@ -1,7 +1,7 @@
 import xs, { MemoryStream, Stream } from 'xstream'
 import debounce from 'xstream/extra/debounce'
 import dropUntil from 'xstream/extra/dropUntil'
-import { ul, li, span, input, div, section, label, DOMSource, VNode, MainDOMSource, p } from '@cycle/dom'
+import { ul, li, span, input, div, section, label, DOMSource, VNode, MainDOMSource, button } from '@cycle/dom'
 import { JSONPSource, Sources } from './types'
 import { TimeSource } from '@cycle/time'
 import { Map as ImmutableMap, List as ImmutableList } from 'immutable';
@@ -112,6 +112,7 @@ function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
   const itemMouseUp$ = domSource.select('.autocomplete-item').events('mouseup')
   const inputFocus$ = domSource.select('.autocompleteable').events('focus')
   const inputBlur$ = domSource.select('.autocompleteable').events('blur')
+  const deleteClick$ = domSource.select('.delete-btn').events('click')
 
   const enterPressed$ = keydown$.filter(({ keyCode }) => keyCode === ENTER_KEYCODE)
   const tabPressed$ = keydown$.filter(({ keyCode }) => keyCode === TAB_KEYCODE)
@@ -121,6 +122,7 @@ function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
   const itemMouseClick$ = itemMouseDown$
     .map(down => itemMouseUp$.filter(up => down.target === up.target))
     .flatten()
+  const deleteSelectedItemIndex$ = deleteClick$.map(ev => (ev.target as any).dataset.index)
 
   return {
     search$: input$
@@ -147,6 +149,7 @@ function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
       xs.merge(inputFocus$.mapTo(true), inputBlur$.mapTo(false)),
     quitAutocomplete$:
       xs.merge(clearField$, inputBlurToElsewhere$),
+    deleteSelectedItemIndex$
   }
 }
 
@@ -193,12 +196,17 @@ function reducers(actions: Actions, suggestionsFromResponse$) {
       return state.set('suggestions', [])
     })
 
-  const querySuggestions$ = actions.wantsSuggestions$
+  const deleteSelectedItemReducer$ = actions.deleteSelectedItemIndex$
+    .map(index => function hideReducer(state: State) {
+      return state.update('selectedList', list => list.delete(index))
+    })
+
+  const querySuggestionsReducer$ = actions.wantsSuggestions$
     .map(accepted =>
       suggestionsFromResponse$.map(suggestions => accepted ? suggestions : [])
     )
     .flatten()
-    .map(suggestions => function updateSuggestions(state: State) {
+    .map(suggestions => function updateSuggestionsReducer(state: State) {
       return state
         .set('suggestions', suggestions)
         .set('highlighted', null)
@@ -211,7 +219,8 @@ function reducers(actions: Actions, suggestionsFromResponse$) {
     setHighlightReducer$,
     selectHighlightedReducer$,
     hideReducer$,
-    querySuggestions$
+    querySuggestionsReducer$,
+    deleteSelectedItemReducer$
   )
 }
 
@@ -219,7 +228,9 @@ function model(suggestionsFromResponse$, actions: Actions) {
   const reducers$ = reducers(actions, suggestionsFromResponse$)
 
   const initReducer$ = xs.of(function initReducer() {
-    return ImmutableMap({ suggestions: [], highlighted: null, selected: null, selectedList: ImmutableList([]) })
+    return ImmutableMap({
+      suggestions: [], highlighted: null, selected: null, selectedList: ImmutableList([])
+    })
   })
 
   return xs.merge(initReducer$, reducers$)
@@ -260,7 +271,10 @@ function renderComboBox({ suggestions, highlighted, selected }) {
 
 function renderSelectedList(list) {
   return ul(
-    list.map(selectedEl => li({ style: {} }, selectedEl))
+    list.map((selectedEl, index) => div([
+      li({ style: {} }, selectedEl),
+      button('.delete-btn', { attrs: { 'data-index': index } }, 'x')
+    ]))
   )
 }
 
@@ -269,7 +283,7 @@ function view(state$: State$): Stream<VNode> {
     const suggestions = state.get('suggestions')
     const highlighted = state.get('highlighted')
     const selected = state.get('selected')
-    const selectedArray = state.get('selectedList').toArray()
+    const selectedList = state.get('selectedList').toArray()
 
     return (
       div('.container', { style: containerStyle }, [
@@ -281,7 +295,7 @@ function view(state$: State$): Stream<VNode> {
           label({ style: searchLabelStyle }, 'Some field:'),
           input({ style: inputTextStyle, attrs: { type: 'text' } })
         ]),
-        section({ style: sectionStyle }, [renderSelectedList(selectedArray)]),
+        section({ style: sectionStyle }, [renderSelectedList(selectedList)]),
       ])
     )
   })
