@@ -1,14 +1,13 @@
 import xs, { MemoryStream, Stream } from 'xstream'
 import debounce from 'xstream/extra/debounce'
 import dropUntil from 'xstream/extra/dropUntil'
-import { ul, li, span, input, div, section, label, DOMSource, VNode } from '@cycle/dom'
-import * as Immutable from 'immutable'
+import { ul, li, span, input, div, section, label, DOMSource, VNode, MainDOMSource } from '@cycle/dom'
 import { JSONPSource, Sources } from './types'
 import { TimeSource } from '@cycle/time'
+import { ResponseStream } from '@cycle/jsonp'
 
-type Actions = { [key: string]: xs<any> }
-// type State = Immutable.Map<string, { suggestions: any, highlighted: any, selected: any }>
-// type State$ = MemoryStream<State>;
+type Actions = { [key: string]: Stream<any> }
+type State = { suggestions: any, highlighted: any, selected: any }
 
 const containerStyle = {
   background: '#EFEFEF',
@@ -97,23 +96,23 @@ function notBetween(first: Stream<any>, second: Stream<any>) {
   )
 }
 
-function intent(domSource: DOMSource, timeSource: TimeSource): Actions {
+function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
   const UP_KEYCODE = 38
   const DOWN_KEYCODE = 40
   const ENTER_KEYCODE = 13
   const TAB_KEYCODE = 9
 
-  const input$ = domSource.select('.autocompleteable').events('input') as xs<any>
-  const keydown$ = domSource.select('.autocompleteable').events('keydown') as xs<KeyboardEvent>
-  const itemHover$ = domSource.select('.autocomplete-item').events('mouseenter') as xs<any>
-  const itemMouseDown$ = domSource.select('.autocomplete-item').events('mousedown') as xs<any>
-  const itemMouseUp$ = domSource.select('.autocomplete-item').events('mouseup') as xs<any>
-  const inputFocus$ = domSource.select('.autocompleteable').events('focus') as xs<any>
-  const inputBlur$ = domSource.select('.autocompleteable').events('blur') as xs<any>
+  const input$ = domSource.select('.autocompleteable').events('input')
+  const keydown$ = domSource.select('.autocompleteable').events('keydown')
+  const itemHover$ = domSource.select('.autocomplete-item').events('mouseenter')
+  const itemMouseDown$ = domSource.select('.autocomplete-item').events('mousedown')
+  const itemMouseUp$ = domSource.select('.autocomplete-item').events('mouseup')
+  const inputFocus$ = domSource.select('.autocompleteable').events('focus')
+  const inputBlur$ = domSource.select('.autocompleteable').events('blur')
 
   const enterPressed$ = keydown$.filter(({ keyCode }) => keyCode === ENTER_KEYCODE)
   const tabPressed$ = keydown$.filter(({ keyCode }) => keyCode === TAB_KEYCODE)
-  const clearField$ = input$.filter(ev => ev.target.value.length === 0)
+  const clearField$ = input$.filter(ev => (ev.target as any).value.length === 0)
   const inputBlurToItem$ = inputBlur$.compose(between(itemMouseDown$, itemMouseUp$))
   const inputBlurToElsewhere$ = inputBlur$.compose(notBetween(itemMouseDown$, itemMouseUp$))
   const itemMouseClick$ = itemMouseDown$
@@ -136,7 +135,7 @@ function intent(domSource: DOMSource, timeSource: TimeSource): Actions {
       })
       .filter(delta => delta !== 0),
     setHighlight$: itemHover$
-      .map(ev => parseInt(ev.target.dataset.index)),
+      .map(ev => parseInt((ev.target as any).dataset.index)),
     keepFocusOnInput$:
       xs.merge(inputBlurToItem$, enterPressed$, tabPressed$),
     selectHighlighted$:
@@ -198,7 +197,7 @@ function reducers(actions: Actions) {
   )
 }
 
-function model(suggestionsFromResponse$: xs<any>, actions: Actions) {
+function model(suggestionsFromResponse$: Stream<any>, actions: Actions) {
   const reducer$ = reducers(actions)
 
   const state$ = actions.wantsSuggestions$
@@ -207,9 +206,7 @@ function model(suggestionsFromResponse$: xs<any>, actions: Actions) {
     )
     .flatten()
     .startWith([])
-    .map(suggestions => Immutable.Map(
-      { suggestions, highlighted: null, selected: null }
-    ))
+    .map(suggestions => ({ suggestions, highlighted: null, selected: null }))
     .map(state => reducer$.fold((acc, reducer: any) => reducer(acc), state))
     .flatten()
 
@@ -272,11 +269,14 @@ function view(state$): VNode {
 const BASE_URL =
   'https://en.wikipedia.org/w/api.php?action=opensearch&format=json&search='
 
+type APIResponse = [string, string[], string[], string[]]
+
+// TODO: type JSONP
 const networking = {
-  processResponses(JSONP: JSONPSource) {
+  processResponses(JSONP: Stream<any>) {
     return JSONP.filter(res$ => res$.request.indexOf(BASE_URL) === 0)
       .flatten()
-      .map(res => res[1])
+      .map((res: APIResponse) => res[1])
   },
 
   generateRequests(searchQuery$) {

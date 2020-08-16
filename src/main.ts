@@ -4,7 +4,6 @@ import { makeDOMDriver } from '@cycle/dom'
 import { makeJSONPDriver } from '@cycle/jsonp'
 import { timeDriver } from '@cycle/time'
 import app from './app'
-import { Drivers } from './types'
 
 function preventDefaultSinkDriver(prevented$: Stream<any>) {
   prevented$.addListener({
@@ -20,10 +19,9 @@ function preventDefaultSinkDriver(prevented$: Stream<any>) {
   return xs.empty()
 }
 
-const drivers: Drivers = {
+run(app, {
   DOM: makeDOMDriver('#main-container'),
   JSONP: makeJSONPDriver(),
   preventDefault: preventDefaultSinkDriver,
   Time: timeDriver
-}
-run(app, { ...drivers });
+});
