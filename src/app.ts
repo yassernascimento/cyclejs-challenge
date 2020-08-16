@@ -1,16 +1,46 @@
-import xs, { MemoryStream, Stream } from 'xstream'
+import xs, {Stream} from 'xstream'
 import debounce from 'xstream/extra/debounce'
 import dropUntil from 'xstream/extra/dropUntil'
-import { ul, li, span, input, div, section, label, DOMSource, VNode, MainDOMSource, button } from '@cycle/dom'
-import { JSONPSource, Sources } from './types'
-import { TimeSource } from '@cycle/time'
-import { Map as ImmutableMap, List as ImmutableList } from 'immutable';
-import { ResponseStream } from '@cycle/jsonp'
-import { StateSource } from '@cycle/state'
+import {
+  ul,
+  li,
+  span,
+  input,
+  button,
+  div,
+  section,
+  label,
+  DOMSource,
+  VNode,
+  MainDOMSource,
+} from '@cycle/dom'
+import {TimeSource} from '@cycle/time'
+import {Map as ImmutableMap, List as ImmutableList} from 'immutable'
+import {Reducer, StateSource} from '@cycle/state'
 
-type Actions = { [key: string]: Stream<any> }
-type State = ImmutableMap<string, any>;
-type State$ = Stream<State>;
+type Sources = {
+  DOM: DOMSource
+  Time: TimeSource
+  state: StateSource<State>
+  JSONP: any
+  preventDefault: Stream<any>
+}
+type Sinks = {
+  DOM: Stream<VNode>
+  state: Stream<Reducer<State>>
+  preventDefault: any
+  JSONP: any
+}
+type Actions = {[key: string]: Stream<any>}
+type State = ImmutableMap<string, any>
+type State$ = Stream<State>
+type SimplifiedState = Partial<{
+  suggestions: string[]
+  highlighted: string
+  selected: string
+  selectedList: string[]
+}>
+type WikipediaAPIResponse = [string, string[], string[], string[]]
 
 const containerStyle = {
   background: '#EFEFEF',
@@ -93,10 +123,11 @@ function between(first: Stream<any>, second: Stream<any>) {
  * output: --a--b-------------e-f--g-----------j-----
  */
 function notBetween(first: Stream<any>, second: Stream<any>) {
-  return (source: Stream<any>) => xs.merge(
-    source.endWhen(first),
-    first.map(() => source.compose(dropUntil(second))).flatten()
-  )
+  return (source: Stream<any>) =>
+    xs.merge(
+      source.endWhen(first),
+      first.map(() => source.compose(dropUntil(second))).flatten()
+    )
 }
 
 function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
@@ -108,21 +139,31 @@ function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
   const input$ = domSource.select('.autocompleteable').events('input')
   const keydown$ = domSource.select('.autocompleteable').events('keydown')
   const itemHover$ = domSource.select('.autocomplete-item').events('mouseenter')
-  const itemMouseDown$ = domSource.select('.autocomplete-item').events('mousedown')
+  const itemMouseDown$ = domSource
+    .select('.autocomplete-item')
+    .events('mousedown')
   const itemMouseUp$ = domSource.select('.autocomplete-item').events('mouseup')
   const inputFocus$ = domSource.select('.autocompleteable').events('focus')
   const inputBlur$ = domSource.select('.autocompleteable').events('blur')
   const deleteClick$ = domSource.select('.delete-btn').events('click')
 
-  const enterPressed$ = keydown$.filter(({ keyCode }) => keyCode === ENTER_KEYCODE)
-  const tabPressed$ = keydown$.filter(({ keyCode }) => keyCode === TAB_KEYCODE)
+  const enterPressed$ = keydown$.filter(
+    ({keyCode}) => keyCode === ENTER_KEYCODE
+  )
+  const tabPressed$ = keydown$.filter(({keyCode}) => keyCode === TAB_KEYCODE)
   const clearField$ = input$.filter(ev => (ev.target as any).value.length === 0)
-  const inputBlurToItem$ = inputBlur$.compose(between(itemMouseDown$, itemMouseUp$))
-  const inputBlurToElsewhere$ = inputBlur$.compose(notBetween(itemMouseDown$, itemMouseUp$))
+  const inputBlurToItem$ = inputBlur$.compose(
+    between(itemMouseDown$, itemMouseUp$)
+  )
+  const inputBlurToElsewhere$ = inputBlur$.compose(
+    notBetween(itemMouseDown$, itemMouseUp$)
+  )
   const itemMouseClick$ = itemMouseDown$
     .map(down => itemMouseUp$.filter(up => down.target === up.target))
     .flatten()
-  const deleteSelectedItemIndex$ = deleteClick$.map(ev => (ev.target as any).dataset.index)
+  const deleteSelectedItemIndex$ = deleteClick$.map(
+    ev => (ev.target as any).dataset.index
+  )
 
   return {
     search$: input$
@@ -131,31 +172,39 @@ function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
       .map(ev => ev.target.value)
       .filter(query => query.length > 0),
     moveHighlight$: keydown$
-      .map(({ keyCode }) => {
+      .map(({keyCode}) => {
         switch (keyCode) {
-          case UP_KEYCODE: return -1
-          case DOWN_KEYCODE: return +1
-          default: return 0
+          case UP_KEYCODE:
+            return -1
+          case DOWN_KEYCODE:
+            return +1
+          default:
+            return 0
         }
       })
       .filter(delta => delta !== 0),
-    setHighlight$: itemHover$
-      .map(ev => parseInt((ev.target as any).dataset.index)),
-    keepFocusOnInput$:
-      xs.merge(inputBlurToItem$, enterPressed$, tabPressed$),
-    selectHighlighted$:
-      xs.merge(itemMouseClick$, enterPressed$, tabPressed$).compose(debounce(1)),
-    wantsSuggestions$:
-      xs.merge(inputFocus$.mapTo(true), inputBlur$.mapTo(false)),
-    quitAutocomplete$:
-      xs.merge(clearField$, inputBlurToElsewhere$),
-    deleteSelectedItemIndex$
+    setHighlight$: itemHover$.map(ev =>
+      parseInt((ev.target as any).dataset.index)
+    ),
+    keepFocusOnInput$: xs.merge(inputBlurToItem$, enterPressed$, tabPressed$),
+    selectHighlighted$: xs
+      .merge(itemMouseClick$, enterPressed$, tabPressed$)
+      .compose(debounce(1)),
+    wantsSuggestions$: xs.merge(
+      inputFocus$.mapTo(true),
+      inputBlur$.mapTo(false)
+    ),
+    quitAutocomplete$: xs.merge(clearField$, inputBlurToElsewhere$),
+    deleteSelectedItemIndex$,
   }
 }
 
-function reducers(actions: Actions, suggestionsFromResponse$) {
-  const moveHighlightReducer$ = actions.moveHighlight$
-    .map(delta => function moveHighlightReducer(state: State) {
+function reducers(
+  actions: Actions,
+  suggestionsFromResponse$: Stream<string[]>
+) {
+  const moveHighlightReducer$ = actions.moveHighlight$.map(
+    delta => (state: State) => {
       const suggestions = state.get('suggestions')
       const wrapAround = x => (x + suggestions.length) % suggestions.length
       return state.update('highlighted', highlighted => {
@@ -165,23 +214,23 @@ function reducers(actions: Actions, suggestionsFromResponse$) {
           return wrapAround(highlighted + delta)
         }
       })
-    })
+    }
+  )
 
-  const setHighlightReducer$ = actions.setHighlight$
-    .map(highlighted => function setHighlightReducer(state: State) {
-      return state.set('highlighted', highlighted)
-    })
+  const setHighlightReducer$ = actions.setHighlight$.map(
+    highlighted => (state: State) => state.set('highlighted', highlighted)
+  )
 
   const selectHighlightedReducer$ = actions.selectHighlighted$
     .mapTo(xs.of(true, false))
     .flatten()
-    .map(selected => function selectHighlightedReducer(state: State) {
+    .map(selected => (state: State) => {
       const suggestions = state.get('suggestions')
       const highlighted = state.get('highlighted')
       const hasHighlight = highlighted !== null
       const isMenuEmpty = suggestions.length === 0
       if (selected && hasHighlight && !isMenuEmpty) {
-        const newSelected = suggestions[highlighted];
+        const newSelected = suggestions[highlighted]
         return state
           .set('selected', newSelected)
           .set('suggestions', [])
@@ -191,28 +240,26 @@ function reducers(actions: Actions, suggestionsFromResponse$) {
       }
     })
 
-  const hideReducer$ = actions.quitAutocomplete$
-    .mapTo(function hideReducer(state: State) {
-      return state.set('suggestions', [])
-    })
+  const hideReducer$ = actions.quitAutocomplete$.mapTo((state: State) =>
+    state.set('suggestions', [])
+  )
 
-  const deleteSelectedItemReducer$ = actions.deleteSelectedItemIndex$
-    .map(index => function hideReducer(state: State) {
-      return state.update('selectedList', list => list.delete(index))
-    })
+  const deleteSelectedItemReducer$ = actions.deleteSelectedItemIndex$.map(
+    index => (state: State) =>
+      state.update('selectedList', list => list.delete(index))
+  )
 
   const querySuggestionsReducer$ = actions.wantsSuggestions$
     .map(accepted =>
-      suggestionsFromResponse$.map(suggestions => accepted ? suggestions : [])
+      suggestionsFromResponse$.map(suggestions => (accepted ? suggestions : []))
     )
     .flatten()
-    .map(suggestions => function updateSuggestionsReducer(state: State) {
-      return state
+    .map(suggestions => (state: State) =>
+      state
         .set('suggestions', suggestions)
         .set('highlighted', null)
         .set('selected', null)
-    })
-
+    )
 
   return xs.merge(
     moveHighlightReducer$,
@@ -224,57 +271,68 @@ function reducers(actions: Actions, suggestionsFromResponse$) {
   )
 }
 
-function model(suggestionsFromResponse$, actions: Actions) {
+function model(suggestionsFromResponse$: Stream<string[]>, actions: Actions) {
   const reducers$ = reducers(actions, suggestionsFromResponse$)
 
-  const initReducer$ = xs.of(function initReducer() {
-    return ImmutableMap({
-      suggestions: [], highlighted: null, selected: null, selectedList: ImmutableList([])
+  const initReducer$ = xs.of(() =>
+    ImmutableMap({
+      suggestions: [],
+      highlighted: null,
+      selected: null,
+      selectedList: ImmutableList([]),
     })
-  })
+  )
 
   return xs.merge(initReducer$, reducers$)
 }
 
-function renderAutocompleteMenu({ suggestions, highlighted }) {
-  if (suggestions.length === 0) { return ul() }
-  const childStyle = index => (Object.assign({}, autocompleteItemStyle, {
-    backgroundColor: highlighted === index ? LIGHT_GREEN : null
-  }))
+function renderAutocompleteMenu({suggestions, highlighted}: SimplifiedState) {
+  if (suggestions.length === 0) {
+    return ul()
+  }
+  const childStyle = index =>
+    Object.assign({}, autocompleteItemStyle, {
+      backgroundColor: highlighted === index ? LIGHT_GREEN : null,
+    })
 
-  return ul('.autocomplete-menu', { style: autocompleteMenuStyle },
+  return ul(
+    '.autocomplete-menu',
+    {style: autocompleteMenuStyle},
     suggestions.map((suggestion, index) =>
-      li('.autocomplete-item',
-        { style: childStyle(index), attrs: { 'data-index': index } },
+      li(
+        '.autocomplete-item',
+        {style: childStyle(index), attrs: {'data-index': index}},
         suggestion
       )
     )
   )
 }
 
-function renderComboBox({ suggestions, highlighted, selected }) {
-  return span('.combo-box', { style: comboBoxStyle }, [
+function renderComboBox({suggestions, highlighted, selected}: SimplifiedState) {
+  return span('.combo-box', {style: comboBoxStyle}, [
     input('.autocompleteable', {
       style: autocompleteableStyle,
-      attrs: { type: 'text' },
+      attrs: {type: 'text'},
       hook: {
-        update: (old, { elm }) => {
+        update: (old, {elm}) => {
           if (selected !== null) {
             elm.value = selected
           }
-        }
-      }
+        },
+      },
     }),
-    renderAutocompleteMenu({ suggestions, highlighted })
+    renderAutocompleteMenu({suggestions, highlighted}),
   ])
 }
 
-function renderSelectedList(list) {
+function renderSelectedList({selectedList}: SimplifiedState) {
   return ul(
-    list.map((selectedEl, index) => div([
-      li({ style: {} }, selectedEl),
-      button('.delete-btn', { attrs: { 'data-index': index } }, 'x')
-    ]))
+    selectedList.map((selectedEl, index) =>
+      div([
+        li({style: {}}, selectedEl),
+        button('.delete-btn', {attrs: {'data-index': index}}, 'x'),
+      ])
+    )
   )
 }
 
@@ -285,33 +343,28 @@ function view(state$: State$): Stream<VNode> {
     const selected = state.get('selected')
     const selectedList = state.get('selectedList').toArray()
 
-    return (
-      div('.container', { style: containerStyle }, [
-        section({ style: sectionStyle }, [
-          label('.search-label', { style: searchLabelStyle }, 'Query:'),
-          renderComboBox({ suggestions, highlighted, selected })
-        ]),
-        section({ style: sectionStyle }, [
-          label({ style: searchLabelStyle }, 'Some field:'),
-          input({ style: inputTextStyle, attrs: { type: 'text' } })
-        ]),
-        section({ style: sectionStyle }, [renderSelectedList(selectedList)]),
-      ])
-    )
+    return div('.container', {style: containerStyle}, [
+      section({style: sectionStyle}, [
+        label('.search-label', {style: searchLabelStyle}, 'Query:'),
+        renderComboBox({suggestions, highlighted, selected}),
+      ]),
+      section({style: sectionStyle}, [
+        label({style: searchLabelStyle}, 'Some field:'),
+        input({style: inputTextStyle, attrs: {type: 'text'}}),
+      ]),
+      section({style: sectionStyle}, [renderSelectedList({selectedList})]),
+    ])
   })
 }
 
 const BASE_URL =
   'https://en.wikipedia.org/w/api.php?action=opensearch&format=json&search='
 
-type APIResponse = [string, string[], string[], string[]]
-
-// TODO: type JSONP
 const networking = {
-  processResponses(JSONP: Stream<any>) {
+  processResponses(JSONP) {
     return JSONP.filter(res$ => res$.request.indexOf(BASE_URL) === 0)
       .flatten()
-      .map((res: APIResponse) => res[1])
+      .map((res: WikipediaAPIResponse) => res[1])
   },
 
   generateRequests(searchQuery$) {
@@ -323,30 +376,29 @@ function preventedEvents(actions: Actions, state$: State$) {
   return state$
     .map(state =>
       actions.keepFocusOnInput$.map(event => {
-        if (state.get('suggestions').length > 0
-          && state.get('highlighted') !== null) {
-          return event
-        } else {
-          return null
-        }
+        const hasSuggestionsToChoose =
+          state.get('suggestions').length > 0 &&
+          state.get('highlighted') !== null
+        return hasSuggestionsToChoose ? event : null
       })
     )
     .flatten()
     .filter(ev => ev !== null)
 }
 
-export default function app(sources: any) {
+export default function app(sources: Sources): Sinks {
   const suggestionsFromResponse$ = networking.processResponses(sources.JSONP)
-  const actions = intent(sources.DOM, sources.Time)
-  const state$: State$ = sources.state.stream;
+  const actions = intent(sources.DOM as MainDOMSource, sources.Time)
+  const state$: State$ = sources.state.stream
   const reducer$ = model(suggestionsFromResponse$, actions)
   const vtree$ = view(state$)
   const prevented$ = preventedEvents(actions, state$)
   const searchRequest$ = networking.generateRequests(actions.search$)
+
   return {
     DOM: vtree$,
     state: reducer$,
     preventDefault: prevented$,
     JSONP: searchRequest$,
-  } as any
+  }
 }

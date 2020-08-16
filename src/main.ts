@@ -1,9 +1,10 @@
-import xs, { Stream } from 'xstream'
-import { run } from '@cycle/run'
-import { makeDOMDriver } from '@cycle/dom'
-import { makeJSONPDriver } from '@cycle/jsonp'
-import { timeDriver } from '@cycle/time'
-import { withState } from '@cycle/state';
+import xs, {Stream} from 'xstream'
+import {run} from '@cycle/run'
+import {makeDOMDriver} from '@cycle/dom'
+import {makeJSONPDriver} from '@cycle/jsonp'
+import {timeDriver} from '@cycle/time'
+import {withState} from '@cycle/state'
+
 import app from './app'
 
 function preventDefaultSinkDriver(prevented$: Stream<any>) {
@@ -14,8 +15,8 @@ function preventDefaultSinkDriver(prevented$: Stream<any>) {
         ev.target.focus()
       }
     },
-    error: () => { },
-    complete: () => { },
+    error: () => {},
+    complete: () => {},
   })
   return xs.empty()
 }
@@ -24,5 +25,5 @@ run(withState(app), {
   DOM: makeDOMDriver('#main-container'),
   JSONP: makeJSONPDriver(),
   preventDefault: preventDefaultSinkDriver,
-  Time: timeDriver
-});
+  Time: timeDriver,
+})
