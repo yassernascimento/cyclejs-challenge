@@ -4,7 +4,9 @@ import dropUntil from 'xstream/extra/dropUntil'
 import { ul, li, span, input, div, section, label, DOMSource, VNode, MainDOMSource } from '@cycle/dom'
 import { JSONPSource, Sources } from './types'
 import { TimeSource } from '@cycle/time'
+import { Map as ImmutableMap } from 'immutable';
 import { ResponseStream } from '@cycle/jsonp'
+import { StateSource } from '@cycle/state'
 
 type Actions = { [key: string]: Stream<any> }
 type State = { suggestions: any, highlighted: any, selected: any }
@@ -147,7 +149,7 @@ function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
   }
 }
 
-function reducers(actions: Actions) {
+function reducers(actions: Actions, suggestionsFromResponse$) {
   const moveHighlightReducer$ = actions.moveHighlight$
     .map(delta => function moveHighlightReducer(state) {
       const suggestions = state.get('suggestions')
@@ -160,7 +162,6 @@ function reducers(actions: Actions) {
         }
       })
     })
-
 
   const setHighlightReducer$ = actions.setHighlight$
     .map(highlighted => function setHighlightReducer(state) {
@@ -189,28 +190,36 @@ function reducers(actions: Actions) {
       return state.set('suggestions', [])
     })
 
-  return xs.merge(
-    moveHighlightReducer$,
-    setHighlightReducer$,
-    selectHighlightedReducer$,
-    hideReducer$
-  )
-}
-
-function model(suggestionsFromResponse$: Stream<any>, actions: Actions) {
-  const reducer$ = reducers(actions)
-
-  const state$ = actions.wantsSuggestions$
+  const querySuggestions$ = actions.wantsSuggestions$
     .map(accepted =>
       suggestionsFromResponse$.map(suggestions => accepted ? suggestions : [])
     )
     .flatten()
-    .startWith([])
-    .map(suggestions => ({ suggestions, highlighted: null, selected: null }))
-    .map(state => reducer$.fold((acc, reducer: any) => reducer(acc), state))
-    .flatten()
+    .map(suggestions => function updateSuggestions(state) {
+      return state
+        .set('suggestions', suggestions)
+        .set('highlighted', null)
+        .set('selected', null)
+    })
 
-  return state$
+
+  return xs.merge(
+    moveHighlightReducer$,
+    setHighlightReducer$,
+    selectHighlightedReducer$,
+    hideReducer$,
+    querySuggestions$
+  )
+}
+
+function model(suggestionsFromResponse$, actions: Actions,) {
+  const reducers$ = reducers(actions, suggestionsFromResponse$)
+
+  const initReducer$ = xs.of(function initReducer(prevState) {
+    return ImmutableMap({ suggestions: [], highlighted: null, selected: null })
+  })
+
+  return xs.merge(initReducer$, reducers$)
 }
 
 function renderAutocompleteMenu({ suggestions, highlighted }) {
@@ -300,16 +309,18 @@ function preventedEvents(actions: Actions, state$) {
     .filter(ev => ev !== null)
 }
 
-export default function app(sources: Sources) {
+export default function app(sources: any) {
   const suggestionsFromResponse$ = networking.processResponses(sources.JSONP)
   const actions = intent(sources.DOM, sources.Time)
-  const state$ = model(suggestionsFromResponse$, actions)
+  const state$ = sources.state.stream;
+  const reducer$ = model(suggestionsFromResponse$, actions)
   const vtree$ = view(state$)
   const prevented$ = preventedEvents(actions, state$)
   const searchRequest$ = networking.generateRequests(actions.search$)
   return {
     DOM: vtree$,
+    state: reducer$,
     preventDefault: prevented$,
     JSONP: searchRequest$,
-  }
+  } as any
 }
