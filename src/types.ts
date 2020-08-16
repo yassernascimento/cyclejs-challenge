@@ -42,3 +42,20 @@ export type Sources = {
   preventDefault: Stream<any>,
   Time: any,
 }
+
+
+// export interface State {
+//   count: number;
+//   age: number;
+//   title: string;
+// }
+
+// export interface Sources {
+//   DOM: DOMSource;
+//   state: StateSource<State>;
+// }
+
+// export interface Sinks {
+//   DOM: Stream<VNode>;
+//   state: Stream<Reducer<State>>;
+// }

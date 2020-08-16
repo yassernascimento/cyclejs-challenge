@@ -1,15 +1,16 @@
 import xs, { MemoryStream, Stream } from 'xstream'
 import debounce from 'xstream/extra/debounce'
 import dropUntil from 'xstream/extra/dropUntil'
-import { ul, li, span, input, div, section, label, DOMSource, VNode, MainDOMSource } from '@cycle/dom'
+import { ul, li, span, input, div, section, label, DOMSource, VNode, MainDOMSource, p } from '@cycle/dom'
 import { JSONPSource, Sources } from './types'
 import { TimeSource } from '@cycle/time'
-import { Map as ImmutableMap } from 'immutable';
+import { Map as ImmutableMap, List as ImmutableList } from 'immutable';
 import { ResponseStream } from '@cycle/jsonp'
 import { StateSource } from '@cycle/state'
 
 type Actions = { [key: string]: Stream<any> }
-type State = { suggestions: any, highlighted: any, selected: any }
+type State = ImmutableMap<string, any>;
+type State$ = Stream<State>;
 
 const containerStyle = {
   background: '#EFEFEF',
@@ -151,7 +152,7 @@ function intent(domSource: MainDOMSource, timeSource: TimeSource): Actions {
 
 function reducers(actions: Actions, suggestionsFromResponse$) {
   const moveHighlightReducer$ = actions.moveHighlight$
-    .map(delta => function moveHighlightReducer(state) {
+    .map(delta => function moveHighlightReducer(state: State) {
       const suggestions = state.get('suggestions')
       const wrapAround = x => (x + suggestions.length) % suggestions.length
       return state.update('highlighted', highlighted => {
@@ -164,29 +165,31 @@ function reducers(actions: Actions, suggestionsFromResponse$) {
     })
 
   const setHighlightReducer$ = actions.setHighlight$
-    .map(highlighted => function setHighlightReducer(state) {
+    .map(highlighted => function setHighlightReducer(state: State) {
       return state.set('highlighted', highlighted)
     })
 
   const selectHighlightedReducer$ = actions.selectHighlighted$
     .mapTo(xs.of(true, false))
     .flatten()
-    .map(selected => function selectHighlightedReducer(state) {
+    .map(selected => function selectHighlightedReducer(state: State) {
       const suggestions = state.get('suggestions')
       const highlighted = state.get('highlighted')
       const hasHighlight = highlighted !== null
       const isMenuEmpty = suggestions.length === 0
       if (selected && hasHighlight && !isMenuEmpty) {
+        const newSelected = suggestions[highlighted];
         return state
-          .set('selected', suggestions[highlighted])
+          .set('selected', newSelected)
           .set('suggestions', [])
+          .update('selectedList', list => list.push(newSelected))
       } else {
         return state.set('selected', null)
       }
     })
 
   const hideReducer$ = actions.quitAutocomplete$
-    .mapTo(function hideReducer(state) {
+    .mapTo(function hideReducer(state: State) {
       return state.set('suggestions', [])
     })
 
@@ -195,7 +198,7 @@ function reducers(actions: Actions, suggestionsFromResponse$) {
       suggestionsFromResponse$.map(suggestions => accepted ? suggestions : [])
     )
     .flatten()
-    .map(suggestions => function updateSuggestions(state) {
+    .map(suggestions => function updateSuggestions(state: State) {
       return state
         .set('suggestions', suggestions)
         .set('highlighted', null)
@@ -212,11 +215,11 @@ function reducers(actions: Actions, suggestionsFromResponse$) {
   )
 }
 
-function model(suggestionsFromResponse$, actions: Actions,) {
+function model(suggestionsFromResponse$, actions: Actions) {
   const reducers$ = reducers(actions, suggestionsFromResponse$)
 
-  const initReducer$ = xs.of(function initReducer(prevState) {
-    return ImmutableMap({ suggestions: [], highlighted: null, selected: null })
+  const initReducer$ = xs.of(function initReducer() {
+    return ImmutableMap({ suggestions: [], highlighted: null, selected: null, selectedList: ImmutableList([]) })
   })
 
   return xs.merge(initReducer$, reducers$)
@@ -255,11 +258,19 @@ function renderComboBox({ suggestions, highlighted, selected }) {
   ])
 }
 
-function view(state$): VNode {
+function renderSelectedList(list) {
+  return ul(
+    list.map(selectedEl => li({ style: {} }, selectedEl))
+  )
+}
+
+function view(state$: State$): Stream<VNode> {
   return state$.map(state => {
     const suggestions = state.get('suggestions')
     const highlighted = state.get('highlighted')
     const selected = state.get('selected')
+    const selectedArray = state.get('selectedList').toArray()
+
     return (
       div('.container', { style: containerStyle }, [
         section({ style: sectionStyle }, [
@@ -269,7 +280,8 @@ function view(state$): VNode {
         section({ style: sectionStyle }, [
           label({ style: searchLabelStyle }, 'Some field:'),
           input({ style: inputTextStyle, attrs: { type: 'text' } })
-        ])
+        ]),
+        section({ style: sectionStyle }, [renderSelectedList(selectedArray)]),
       ])
     )
   })
@@ -293,7 +305,7 @@ const networking = {
   },
 }
 
-function preventedEvents(actions: Actions, state$) {
+function preventedEvents(actions: Actions, state$: State$) {
   return state$
     .map(state =>
       actions.keepFocusOnInput$.map(event => {
@@ -312,7 +324,7 @@ function preventedEvents(actions: Actions, state$) {
 export default function app(sources: any) {
   const suggestionsFromResponse$ = networking.processResponses(sources.JSONP)
   const actions = intent(sources.DOM, sources.Time)
-  const state$ = sources.state.stream;
+  const state$: State$ = sources.state.stream;
   const reducer$ = model(suggestionsFromResponse$, actions)
   const vtree$ = view(state$)
   const prevented$ = preventedEvents(actions, state$)
